@@ -2,55 +2,100 @@
 
 ## Visão Geral
 
-A pipeline possui **2 jobs** principais:
+A pipeline é dividida em **2 workflows** separados:
 
 ```
-┌─────────────────┐      ┌─────────────────┐
-│   🔨 Build      │─────▶│   🚀 Deploy     │
-│   & Test        │      │   to EC2        │
-└─────────────────┘      └─────────────────┘
+                          feature/xxx
+                              │
+                              │  push (nada acontece)
+                              │
+                              ▼
+                     Abre PR → develop
+                              │
+                 ┌────────────┤
+                 ▼            │
+          ┌────────────┐      │
+          │  ci.yml    │      │
+          │ 🔨 Build   │      │
+          │ 🧪 Test    │      │
+          │ 🐳 Docker  │      │
+          └────────────┘      │
+                              │  PR mergeado
+                              ▼
+                       ┌────────────┐
+                       │  cd.yml    │
+                       │ 🔨 Build   │
+                       │ 🧪 Test    │
+                       │ 🐳 ECR     │
+                       │ 🚀 Deploy  │
+                       └────────────┘
 ```
 
-## Job 1: Build & Test
+---
 
-**Roda em:** Todo push e PR para `main`
+## Workflow 1: CI (`ci.yml`)
 
+**Arquivo:** `.github/workflows/ci.yml`
+
+**Aciona quando:**
+- Push na branch `develop`
+- Pull Request aberto para `develop` (ex: `feature/xxx` → `develop`)
+
+**Steps:**
 1. Checkout do código
 2. Setup .NET 8 SDK
 3. Restore das dependências
 4. Build em modo Release
 5. Execução dos testes (com upload dos resultados)
-6. Build da imagem Docker
-7. Save da imagem como artefato
+6. Validação do build Docker
 
-## Job 2: Deploy to EC2
+> ⚠️ Push direto em branches `feature/*` **não aciona** a pipeline. Só quando abre PR para `develop`.
 
-**Roda em:** Apenas push na `main` (após merge de PR)
+---
 
-1. Download do artefato Docker
-2. SCP da imagem para a EC2
-3. SSH na EC2 para:
-   - Load da imagem Docker
+## Workflow 2: CD (`cd.yml`)
+
+**Arquivo:** `.github/workflows/cd.yml`
+
+**Aciona quando:**
+- Pull Request é **mergeado** na `develop`
+
+> PRs fechados sem merge **não acionam** o deploy.
+
+**Steps:**
+1. Checkout do código
+2. Build e testes (validação final)
+3. Login no AWS ECR
+4. Build e push da imagem Docker para o ECR
+5. SSH na EC2 para:
+   - Pull da nova imagem do ECR
    - Stop/Remove do container antigo
    - Start do novo container
-   - Limpeza de imagens antigas
    - Health check
 
-## Fluxo de Trabalho Recomendado
+---
 
-1. Criar uma branch a partir de `main`
-2. Fazer as alterações
-3. Abrir um Pull Request
-4. A pipeline roda Build + Testes automaticamente
-5. Após aprovação e merge, o Deploy roda automaticamente
+## Fluxo de Trabalho
+
+1. Criar uma branch `feature/xxx` a partir de `develop`
+2. Fazer as alterações e commitar (nada acontece)
+3. Abrir um Pull Request de `feature/xxx` → `develop`
+4. **CI roda automaticamente** (build + testes)
+5. Code review e aprovação
+6. Merge do PR
+7. **CD roda automaticamente** (build + push ECR + deploy EC2)
+
+---
 
 ## Secrets Necessários
 
-| Secret        | Exemplo                              |
-|---------------|--------------------------------------|
-| `EC2_HOST`    | `54.123.45.67`                       |
-| `EC2_USER`    | `ubuntu`                             |
-| `EC2_SSH_KEY` | Conteúdo da chave `.pem` da EC2      |
+| Secret                  | Exemplo / Descrição                       |
+|-------------------------|-------------------------------------------|
+| `AWS_ACCESS_KEY_ID`     | Access Key do IAM user                    |
+| `AWS_SECRET_ACCESS_KEY` | Secret Key do IAM user                    |
+| `EC2_HOST`              | `54.123.45.67`                            |
+| `EC2_USER`              | `ubuntu`                                  |
+| `EC2_SSH_KEY`           | Conteúdo da chave `.pem` da EC2           |
 
 ### Como adicionar os Secrets
 

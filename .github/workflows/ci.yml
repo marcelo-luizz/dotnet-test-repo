@@ -1,21 +1,15 @@
-name: CI/CD - Build and Deploy to EC2
+name: CI - Build & Test
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - develop
   pull_request:
-    branches: [ main ]
-
-env:
-  DOCKER_IMAGE: sample-api
-  CONTAINER_NAME: sample-api
-  APP_PORT: 8080
+    branches:
+      - develop
 
 jobs:
-  # ============================================
-  # Job 1: Build, Test and Validate Docker Image
-  # ============================================
-  build:
+  build-and-test:
     name: 🔨 Build & Test
     runs-on: ubuntu-latest
 
@@ -44,5 +38,5 @@ jobs:
           name: test-results
           path: TestResults/
 
-      - name: 🐳 Validate Docker image
-        run: docker build -t ${{ env.DOCKER_IMAGE }}:${{ github.sha }} -t ${{ env.DOCKER_IMAGE }}:latest .
+      - name: 🐳 Validate Docker build
+        run: docker build -t sample-api:${{ github.sha }} .
