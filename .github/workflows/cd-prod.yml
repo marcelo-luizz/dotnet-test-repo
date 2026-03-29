@@ -14,7 +14,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: prod/nautihub
+  ECR_REPOSITORY: dev/nautihub
   ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }} # Ex: 123456789012.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
