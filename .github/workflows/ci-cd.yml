@@ -1,0 +1,115 @@
+name: CI/CD - Build and Deploy to EC2
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOCKER_IMAGE: sample-api
+  CONTAINER_NAME: sample-api
+  APP_PORT: 8080
+
+jobs:
+  # ============================================
+  # Job 1: Build, Test and Push Docker Image
+  # ============================================
+  build:
+    name: 🔨 Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 📦 Restore dependencies
+        run: dotnet restore
+
+      - name: 🔨 Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: 🧪 Run tests
+        run: dotnet test --no-build --configuration Release --verbosity normal --logger trx --results-directory TestResults
+
+      - name: 📊 Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults/
+
+      - name: 🐳 Build Docker image
+        run: docker build -t ${{ env.DOCKER_IMAGE }}:${{ github.sha }} -t ${{ env.DOCKER_IMAGE }}:latest .
+
+      - name: 💾 Save Docker image
+        run: docker save ${{ env.DOCKER_IMAGE }}:latest | gzip > docker-image.tar.gz
+
+      - name: 📤 Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: docker-image.tar.gz
+          retention-days: 1
+
+  # ============================================
+  # Job 2: Deploy to EC2
+  # ============================================
+  deploy:
+    name: 🚀 Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: 📥 Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: 📋 Copy image to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "docker-image.tar.gz"
+          target: "/tmp"
+
+      - name: 🚀 Deploy on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "🐳 Loading Docker image..."
+            docker load < /tmp/docker-image.tar.gz
+
+            echo "🛑 Stopping existing container (if any)..."
+            docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+            docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+
+            echo "🚀 Starting new container..."
+            docker run -d \
+              --name ${{ env.CONTAINER_NAME }} \
+              --restart unless-stopped \
+              -p ${{ env.APP_PORT }}:8080 \
+              -e ASPNETCORE_ENVIRONMENT=Production \
+              -e APP_VERSION=${{ github.sha }} \
+              ${{ env.DOCKER_IMAGE }}:latest
+
+            echo "🧹 Cleaning up..."
+            rm -f /tmp/docker-image.tar.gz
+            docker image prune -f
+
+            echo "✅ Deploy completed!"
+
+            echo "⏳ Waiting for health check..."
+            sleep 5
+            curl -f http://localhost:${{ env.APP_PORT }}/api/health || echo "⚠️ Health check failed"
