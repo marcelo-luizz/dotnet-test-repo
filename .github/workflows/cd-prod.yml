@@ -81,28 +81,36 @@ jobs:
           echo "📦 Deploying image: ${IMAGE}"
           echo "🖥️  Instance: ${INSTANCE_ID}"
 
+          # Cria o script de deploy
+          cat > /tmp/deploy.sh <<EOF
+          #!/bin/bash
+          set -e
+          cd /opt/app
+          echo "🔄 Syncing environment variables..."
+          ./sync-env.sh
+          echo "🔐 Logging in to ECR..."
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+          echo "⬇️ Pulling latest image..."
+          docker compose pull
+          echo "🛑 Stopping current containers..."
+          docker compose down
+          echo "🧹 Cleaning up old images..."
+          docker image prune -f
+          echo "🚀 Starting new containers..."
+          docker compose up -d
+          echo "✅ Deploy completed!"
+          sleep 5
+          curl -f http://localhost:8080/api/health || echo "⚠️ Health check failed"
+          EOF
+
+          # Converte o script em JSON array com um único elemento
+          SCRIPT_CONTENT=$(cat /tmp/deploy.sh | jq -Rs '.')
+          PARAMS=$(jq -n --argjson script "$SCRIPT_CONTENT" '{"commands": [$script]}')
+
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
-            --parameters "commands=[
-              'echo \"🚀 Starting deploy...\"',
-              'cd /opt/app',
-              'echo \"🔄 Syncing environment variables...\"',
-              './sync-env.sh',
-              'echo \"🔐 Logging in to ECR...\"',
-              'aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}',
-              'echo \"⬇️ Pulling latest image...\"',
-              'docker compose pull',
-              'echo \"🛑 Stopping current containers...\"',
-              'docker compose down',
-              'echo \"🧹 Cleaning up old images...\"',
-              'docker image prune -f',
-              'echo \"🚀 Starting new containers...\"',
-              'docker compose up -d',
-              'echo \"✅ Deploy completed!\"',
-              'sleep 5',
-              'curl -f http://localhost:8080/api/health || echo \"⚠️ Health check failed\"'
-            ]" \
+            --parameters "${PARAMS}" \
             --output text --query 'Command.CommandId')
 
           echo "⏳ Aguardando execução... (CommandId: ${COMMAND_ID})"
