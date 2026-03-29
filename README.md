@@ -9,7 +9,8 @@ API simples em .NET 8 para testar pipeline CI/CD com GitHub Actions e deploy na 
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml             # Pipeline CI (build + test)
-│       └── cd.yml             # Pipeline CD (build + push ECR + deploy EC2)
+│       ├── cd-dev.yml         # Pipeline CD DEV (notifica + deploy futuro)
+│       └── cd-prod.yml        # Pipeline CD PROD (build + push ECR + deploy EC2)
 ├── src/
 │   └── Api/
 │       ├── Endpoints/
@@ -80,10 +81,19 @@ curl http://localhost:8080/api/health
 
 ## 🔄 Pipeline CI/CD
 
-Duas pipelines separadas:
+Três workflows separados:
 
-- **CI (`ci.yml`)** — Push na `develop` ou PR aberto para `develop` → Build + Testes + Validação Docker
-- **CD (`cd.yml`)** — PR mergeado na `develop` → Build + Push ECR + Deploy EC2
+- **CI (`ci.yml`)** — PR aberto para `develop` → Build + Testes + Validação Docker
+- **CD DEV (`cd-dev.yml`)** — PR mergeado na `develop` → Notifica o dev para abrir PR na `main` *(deploy para DEV comentado, pronto para ativar no futuro)*
+- **CD PROD (`cd-prod.yml`)** — PR mergeado na `main` → Build + Push ECR + Deploy EC2
+
+### Fluxo
+
+```
+feature/xxx → PR → develop     → CI roda (build + test)
+                   merge         → CD DEV roda (notifica: "abra PR para main")
+develop     → PR → main         → CD PROD roda (ECR + deploy EC2)
+```
 
 Veja mais detalhes em [docs/PIPELINE.md](docs/PIPELINE.md).
 
@@ -91,13 +101,15 @@ Veja mais detalhes em [docs/PIPELINE.md](docs/PIPELINE.md).
 
 Configure os seguintes secrets no repositório (`Settings > Secrets and variables > Actions`):
 
-| Secret                  | Descrição                                    |
-|-------------------------|----------------------------------------------|
-| `AWS_ACCESS_KEY_ID`     | Access Key do IAM user com acesso ao ECR     |
-| `AWS_SECRET_ACCESS_KEY` | Secret Key do IAM user                       |
-| `EC2_HOST`              | IP público ou DNS da instância EC2           |
-| `EC2_USER`              | Usuário SSH (ex: `ec2-user`, `ubuntu`)       |
-| `EC2_SSH_KEY`           | Chave privada SSH para acesso à EC2          |
+| Secret                  | Descrição                                        | Usado em    |
+|-------------------------|--------------------------------------------------|-------------|
+| `AWS_ACCESS_KEY_ID`     | Access Key do IAM user com acesso ao ECR         | CD PROD     |
+| `AWS_SECRET_ACCESS_KEY` | Secret Key do IAM user                           | CD PROD     |
+| `EC2_HOST`              | IP público ou DNS da instância EC2               | CD PROD     |
+| `EC2_USER`              | Usuário SSH (ex: `ec2-user`, `ubuntu`)           | CD PROD     |
+| `EC2_SSH_KEY`           | Chave privada SSH para acesso à EC2              | CD PROD     |
+
+> 💡 Quando ativar o ambiente DEV, adicione também: `EC2_HOST_DEV`, `EC2_USER_DEV`, `EC2_SSH_KEY_DEV`
 
 ## 📝 Licença
 
