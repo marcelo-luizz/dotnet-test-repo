@@ -7,21 +7,33 @@ public static class HealthEndpoints
         var group = app.MapGroup("/api/health")
             .WithTags("Health");
 
-        group.MapGet("/", () => Results.Ok(new
+        group.MapGet("/", (ILoggerFactory loggerFactory) =>
         {
-            Status = "Healthy",
-            Timestamp = DateTime.UtcNow,
-            Version = Environment.GetEnvironmentVariable("APP_VERSION") ?? "1.0.0"
-        }))
+            var logger = loggerFactory.CreateLogger("HealthEndpoints");
+            logger.LogInformation("Health check requested");
+
+            return Results.Ok(new
+            {
+                Status = "Healthy",
+                Timestamp = DateTime.UtcNow,
+                Version = Environment.GetEnvironmentVariable("APP_VERSION") ?? "1.0.0"
+            });
+        })
         .WithName("HealthCheck")
         .WithSummary("Verifica se a API está saudável")
         .Produces(200);
 
-        group.MapGet("/ready", () => Results.Ok(new
+        group.MapGet("/ready", (ILoggerFactory loggerFactory) =>
         {
-            Ready = true,
-            Timestamp = DateTime.UtcNow
-        }))
+            var logger = loggerFactory.CreateLogger("HealthEndpoints");
+            logger.LogInformation("Readiness check requested");
+
+            return Results.Ok(new
+            {
+                Ready = true,
+                Timestamp = DateTime.UtcNow
+            });
+        })
         .WithName("ReadinessCheck")
         .WithSummary("Verifica se a API está pronta para receber tráfego")
         .Produces(200);
