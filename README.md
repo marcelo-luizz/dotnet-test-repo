@@ -98,6 +98,8 @@ develop     → PR → main         → CD PROD roda (ECR + deploy EC2)
 
 Veja mais detalhes em [docs/PIPELINE.md](docs/PIPELINE.md).
 
+📘 **Desenvolvedores:** leiam o [Guia do Desenvolvedor](docs/GUIA_DESENVOLVEDOR.md) para entender o fluxo completo passo a passo.
+
 ## ⚙️ Configuração dos Secrets no GitHub
 
 Configure os seguintes secrets no repositório (`Settings > Secrets and variables > Actions`):
