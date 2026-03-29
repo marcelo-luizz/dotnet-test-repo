@@ -91,13 +91,13 @@ jobs:
           echo "🔐 Logging in to ECR..."
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
           echo "⬇️ Pulling latest image..."
-          docker compose pull
+          docker-compose pull
           echo "🛑 Stopping current containers..."
-          docker compose down
+          docker-compose down
           echo "🧹 Cleaning up old images..."
           docker image prune -f
           echo "🚀 Starting new containers..."
-          docker compose up -d
+          docker-compose up -d
           echo "✅ Deploy completed!"
           sleep 5
           curl -f http://localhost:8080/api/health || echo "⚠️ Health check failed"
