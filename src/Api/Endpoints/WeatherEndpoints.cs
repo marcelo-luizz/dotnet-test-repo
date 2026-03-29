@@ -13,8 +13,11 @@ public static class WeatherEndpoints
         var group = app.MapGroup("/api/weather")
             .WithTags("Weather");
 
-        group.MapGet("/forecast", () =>
+        group.MapGet("/forecast", (ILoggerFactory loggerFactory) =>
         {
+            var logger = loggerFactory.CreateLogger("WeatherEndpoints");
+            logger.LogInformation("Weather forecast requested for next 5 days");
+
             var forecast = Enumerable.Range(1, 5).Select(index => new WeatherForecast
             {
                 Date = DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
@@ -23,14 +26,18 @@ public static class WeatherEndpoints
             })
             .ToArray();
 
+            logger.LogInformation("Returning {Count} forecast items", forecast.Length);
             return Results.Ok(forecast);
         })
         .WithName("GetWeatherForecast")
         .WithSummary("Retorna previsão do tempo para os próximos 5 dias")
         .Produces<WeatherForecast[]>(200);
 
-        group.MapGet("/forecast/{city}", (string city) =>
+        group.MapGet("/forecast/{city}", (string city, ILoggerFactory loggerFactory) =>
         {
+            var logger = loggerFactory.CreateLogger("WeatherEndpoints");
+            logger.LogInformation("Weather forecast requested for city: {City}", city);
+
             var forecast = new WeatherForecast
             {
                 Date = DateOnly.FromDateTime(DateTime.Now),
@@ -39,6 +46,7 @@ public static class WeatherEndpoints
                 City = city
             };
 
+            logger.LogInformation("Returning forecast for {City}: {Temp}°C", city, forecast.TemperatureC);
             return Results.Ok(forecast);
         })
         .WithName("GetWeatherByCity")
