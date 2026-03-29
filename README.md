@@ -103,13 +103,12 @@ Configure os seguintes secrets no repositório (`Settings > Secrets and variable
 
 | Secret                  | Descrição                                        | Usado em    |
 |-------------------------|--------------------------------------------------|-------------|
-| `AWS_ACCESS_KEY_ID`     | Access Key do IAM user com acesso ao ECR         | CD PROD     |
+| `AWS_ACCESS_KEY_ID`     | Access Key do IAM user com acesso ao ECR/SSM     | CD PROD     |
 | `AWS_SECRET_ACCESS_KEY` | Secret Key do IAM user                           | CD PROD     |
-| `EC2_HOST`              | IP público ou DNS da instância EC2               | CD PROD     |
-| `EC2_USER`              | Usuário SSH (ex: `ec2-user`, `ubuntu`)           | CD PROD     |
-| `EC2_SSH_KEY`           | Chave privada SSH para acesso à EC2              | CD PROD     |
 
-> 💡 Quando ativar o ambiente DEV, adicione também: `EC2_HOST_DEV`, `EC2_USER_DEV`, `EC2_SSH_KEY_DEV`
+> ⚠️ O deploy usa **SSM (Systems Manager)** — não precisa de chave SSH. A EC2 precisa ter o SSM Agent rodando e as tags `AppName=api` e `Environment=prod`.
+
+> 💡 O IAM user precisa de permissões: `ecr:*`, `ec2:DescribeInstances`, `ssm:SendCommand`, `ssm:GetCommandInvocation`.
 
 ## 📝 Licença
 

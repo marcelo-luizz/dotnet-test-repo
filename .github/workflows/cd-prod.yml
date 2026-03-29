@@ -51,37 +51,84 @@ jobs:
 
           echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-      # - name: 📋 Deploy to EC2
-      #   uses: appleboy/ssh-action@v1.0.3
-      #   with:
-      #     host: ${{ secrets.EC2_HOST }}
-      #     username: ${{ secrets.EC2_USER }}
-      #     key: ${{ secrets.EC2_SSH_KEY }}
-      #     envs: AWS_REGION,ECR_REPOSITORY
-      #     script: |
-      #       # Login no ECR
-      #       aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${{ steps.ecr-login.outputs.registry }}
+      - name: � Get EC2 Instance ID
+        id: ec2
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters \
+              "Name=tag:AppName,Values=api" \
+              "Name=tag:Environment,Values=prod" \
+              "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
 
-      #       # Pull da nova imagem
-      #       docker pull ${{ steps.ecr-login.outputs.registry }}/$ECR_REPOSITORY:latest
+          if [ "${INSTANCE_ID}" = "None" ] || [ -z "${INSTANCE_ID}" ]; then
+            echo "❌ Nenhuma instância EC2 encontrada com tags AppName=api e Environment=prod"
+            exit 1
+          fi
 
-      #       # Stop/Remove container antigo
-      #       docker stop sample-api 2>/dev/null || true
-      #       docker rm sample-api 2>/dev/null || true
+          echo "✅ Instance ID: ${INSTANCE_ID}"
+          echo "instance_id=${INSTANCE_ID}" >> $GITHUB_OUTPUT
 
-      #       # Start novo container
-      #       docker run -d \
-      #         --name sample-api \
-      #         --restart unless-stopped \
-      #         -p 8080:8080 \
-      #         -e ASPNETCORE_ENVIRONMENT=Production \
-      #         ${{ steps.ecr-login.outputs.registry }}/$ECR_REPOSITORY:latest
+      - name: 🚀 Deploy via SSM
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          INSTANCE_ID="${{ steps.ec2.outputs.instance_id }}"
 
-      #       # Cleanup
-      #       docker image prune -f
+          echo "📦 Deploying image: ${IMAGE}"
+          echo "🖥️  Instance: ${INSTANCE_ID}"
 
-      #       echo "✅ Deploy PROD completed!"
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[
+              'echo \"🚀 Starting deploy...\"',
+              'cd /opt/app',
+              'echo \"🔄 Syncing environment variables...\"',
+              './sync-env.sh',
+              'echo \"🔐 Logging in to ECR...\"',
+              'aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}',
+              'echo \"⬇️ Pulling latest image...\"',
+              'docker compose pull',
+              'echo \"🛑 Stopping current containers...\"',
+              'docker compose down',
+              'echo \"🧹 Cleaning up old images...\"',
+              'docker image prune -f',
+              'echo \"🚀 Starting new containers...\"',
+              'docker compose up -d',
+              'echo \"✅ Deploy completed!\"',
+              'sleep 5',
+              'curl -f http://localhost:8080/api/health || echo \"⚠️ Health check failed\"'
+            ]" \
+            --output text --query 'Command.CommandId')
 
-      #       # Health check
-      #       sleep 5
-      #       curl -f http://localhost:8080/api/health || echo "⚠️ Health check failed"
+          echo "⏳ Aguardando execução... (CommandId: ${COMMAND_ID})"
+
+          aws ssm wait command-executed \
+            --instance-id "${INSTANCE_ID}" \
+            --command-id "${COMMAND_ID}" 2>/dev/null || true
+
+          STATUS=$(aws ssm get-command-invocation \
+            --instance-id "${INSTANCE_ID}" \
+            --command-id "${COMMAND_ID}" \
+            --query 'Status' --output text)
+
+          echo "📋 Output:"
+          aws ssm get-command-invocation \
+            --instance-id "${INSTANCE_ID}" \
+            --command-id "${COMMAND_ID}" \
+            --query 'StandardOutputContent' --output text
+
+          if [ "${STATUS}" != "Success" ]; then
+            echo "❌ Deploy falhou (status: ${STATUS})"
+            aws ssm get-command-invocation \
+              --instance-id "${INSTANCE_ID}" \
+              --command-id "${COMMAND_ID}" \
+              --query 'StandardErrorContent' --output text
+            exit 1
+          fi
+
+          echo "✅ Deploy PROD finalizado com sucesso!"
