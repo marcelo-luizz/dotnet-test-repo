@@ -57,13 +57,13 @@ jobs:
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters \
               "Name=tag:AppName,Values=api" \
-              "Name=tag:Environment,Values=prod" \
+              "Name=tag:Environment,Values=dev" \
               "Name=instance-state-name,Values=running" \
             --query 'Reservations[0].Instances[0].InstanceId' \
             --output text)
 
           if [ "${INSTANCE_ID}" = "None" ] || [ -z "${INSTANCE_ID}" ]; then
-            echo "❌ Nenhuma instância EC2 encontrada com tags AppName=api e Environment=prod"
+            echo "❌ Nenhuma instância EC2 encontrada com tags AppName=api e Environment=dev"
             exit 1
           fi
 
