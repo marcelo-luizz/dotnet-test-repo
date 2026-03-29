@@ -1,4 +1,4 @@
-name: CD PROD - Build, Push ECR & Deploy to EC2
+name: CD PROD - Deploy to Prod
 
 # =============================================================
 # 🚀 Aciona quando um PR é mergeado na branch main
@@ -15,7 +15,7 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: dev/nautihub
-  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }} # Ex: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
 
 jobs:
   deploy-prod:

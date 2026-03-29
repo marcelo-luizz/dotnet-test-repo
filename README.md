@@ -26,10 +26,11 @@ API simples em .NET 8 para testar pipeline CI/CD com GitHub Actions e deploy na 
 │       ├── WeatherEndpointsTests.cs
 │       └── Api.Tests.csproj
 ├── docs/
-│   ├── SETUP_EC2.md
-│   └── PIPELINE.md
+│   ├── SETUP_EC2.md           # Guia de setup da EC2
+│   └── PIPELINE.md            # Documentação detalhada do CI/CD
 ├── Dockerfile
 ├── .dockerignore
+├── .editorconfig              # Regras de estilo e análise de código
 ├── .gitignore
 ├── SampleApi.sln
 └── README.md
@@ -105,10 +106,13 @@ Configure os seguintes secrets no repositório (`Settings > Secrets and variable
 |-------------------------|--------------------------------------------------|-------------|
 | `AWS_ACCESS_KEY_ID`     | Access Key do IAM user com acesso ao ECR/SSM     | CD PROD     |
 | `AWS_SECRET_ACCESS_KEY` | Secret Key do IAM user                           | CD PROD     |
+| `ECR_REGISTRY`          | URL do ECR (ex: `123456789.dkr.ecr.us-east-1.amazonaws.com`) | CD PROD |
 
-> ⚠️ O deploy usa **SSM (Systems Manager)** — não precisa de chave SSH. A EC2 precisa ter o SSM Agent rodando e as tags `AppName=api` e `Environment=prod`.
+> ⚠️ O deploy usa **SSM (Systems Manager)** — não precisa de chave SSH. A EC2 é encontrada automaticamente pelas tags `AppName=api` e `Environment=dev`.
 
 > 💡 O IAM user precisa de permissões: `ecr:*`, `ec2:DescribeInstances`, `ssm:SendCommand`, `ssm:GetCommandInvocation`.
+
+Veja o guia completo de setup da EC2 em [docs/SETUP_EC2.md](docs/SETUP_EC2.md).
 
 ## 📝 Licença
 

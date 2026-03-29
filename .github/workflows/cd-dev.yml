@@ -1,4 +1,4 @@
-name: CD DEV - Deploy to Development
+name: CD DEV - Deploy to Dev
 
 # =============================================================
 # 🔔 Aciona quando um PR é mergeado na branch develop
@@ -19,7 +19,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: dev/nautihub
+  ECR_REPOSITORY: prod/nautihub
   ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }} # Ex: 123456789012.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
@@ -44,129 +44,132 @@ jobs:
           echo "============================================================="
 
   # =============================================================
-  # 🚀 DEPLOY DEV (DESCOMENTE QUANDO HOUVER AMBIENTE)
+  # 🚀 DEPLOY DEV (DESCOMENTADO QUANDO HOUVER AMBIENTE)
   #
   # Para ativar: descomente o job abaixo e comente/remova o job
-  # "notify" acima.
-  #
-  # Pré-requisitos na EC2 de DEV:
-  #   - SSM Agent instalado e rodando
-  #   - IAM Role com permissão ssm:SendCommand
-  #   - Tags na instância: AppName=api, Environment=dev
-  #   - Docker instalado
+  # "notify" acima. Adicione os secrets necessários no GitHub.
   # =============================================================
 
-  # deploy-dev:
-  #   name: 🚀 Deploy to DEV
-  #   runs-on: ubuntu-latest
-  #   if: github.event.pull_request.merged == true
-  #
-  #   steps:
-  #     - name: 📥 Checkout code
-  #       uses: actions/checkout@v4
-  #
-  #     - name: 🔑 Configure AWS Credentials
-  #       uses: aws-actions/configure-aws-credentials@v4
-  #       with:
-  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  #         aws-region: ${{ env.AWS_REGION }}
-  #
-  #     - name: 🔐 Login to Amazon ECR
-  #       id: ecr-login
-  #       uses: aws-actions/amazon-ecr-login@v2
-  #
-  #     - name: 🐳 Build & Push Docker image
-  #       env:
-  #         ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-  #         IMAGE_TAG: ${{ github.sha }}
-  #       run: |
-  #         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-  #                       -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-  #
-  #         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-  #         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-  #
-  #         echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-  #
-  #     - name: � Get EC2 Instance ID
-  #       id: ec2
-  #       run: |
-  #         INSTANCE_ID=$(aws ec2 describe-instances \
-  #           --filters \
-  #             "Name=tag:AppName,Values=api" \
-  #             "Name=tag:Environment,Values=dev" \
-  #             "Name=instance-state-name,Values=running" \
-  #           --query 'Reservations[0].Instances[0].InstanceId' \
-  #           --output text)
-  #
-  #         if [ "${INSTANCE_ID}" = "None" ] || [ -z "${INSTANCE_ID}" ]; then
-  #           echo "❌ Nenhuma instância EC2 encontrada com tags AppName=api e Environment=dev"
-  #           exit 1
-  #         fi
-  #
-  #         echo "✅ Instance ID: ${INSTANCE_ID}"
-  #         echo "instance_id=${INSTANCE_ID}" >> $GITHUB_OUTPUT
-  #
-  #     - name: 🚀 Deploy via SSM
-  #       env:
-  #         ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-  #         IMAGE_TAG: ${{ github.sha }}
-  #       run: |
-  #         IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
-  #         INSTANCE_ID="${{ steps.ec2.outputs.instance_id }}"
-  #
-  #         echo "📦 Deploying image: ${IMAGE}"
-  #         echo "🖥️  Instance: ${INSTANCE_ID}"
-  #
-  #         COMMAND_ID=$(aws ssm send-command \
-  #           --instance-ids "${INSTANCE_ID}" \
-  #           --document-name "AWS-RunShellScript" \
-  #           --parameters "commands=[
-  #             'echo \"🚀 Starting deploy DEV...\"',
-  #             'cd /opt/app',
-  #             'echo \"🔄 Syncing environment variables...\"',
-  #             './sync-env.sh dev ${{ env.AWS_REGION }}',
-  #             'echo \"🔐 Logging in to ECR...\"',
-  #             'aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}',
-  #             'echo \"⬇️ Pulling latest image...\"',
-  #             'docker compose pull',
-  #             'echo \"🛑 Stopping current containers...\"',
-  #             'docker compose down',
-  #             'echo \"🧹 Cleaning up old images...\"',
-  #             'docker image prune -f',
-  #             'echo \"🚀 Starting new containers...\"',
-  #             'docker compose up -d',
-  #             'echo \"✅ Deploy DEV completed!\"',
-  #             'sleep 5',
-  #             'curl -f http://localhost:8080/api/health || echo \"⚠️ Health check failed\"'
-  #           ]" \
-  #           --output text --query 'Command.CommandId')
-  #
-  #         echo "⏳ Aguardando execução... (CommandId: ${COMMAND_ID})"
-  #
-  #         aws ssm wait command-executed \
-  #           --instance-id "${INSTANCE_ID}" \
-  #           --command-id "${COMMAND_ID}" 2>/dev/null || true
-  #
-  #         STATUS=$(aws ssm get-command-invocation \
-  #           --instance-id "${INSTANCE_ID}" \
-  #           --command-id "${COMMAND_ID}" \
-  #           --query 'Status' --output text)
-  #
-  #         echo "📋 Output:"
-  #         aws ssm get-command-invocation \
-  #           --instance-id "${INSTANCE_ID}" \
-  #           --command-id "${COMMAND_ID}" \
-  #           --query 'StandardOutputContent' --output text
-  #
-  #         if [ "${STATUS}" != "Success" ]; then
-  #           echo "❌ Deploy DEV falhou (status: ${STATUS})"
-  #           aws ssm get-command-invocation \
-  #             --instance-id "${INSTANCE_ID}" \
-  #             --command-id "${COMMAND_ID}" \
-  #             --query 'StandardErrorContent' --output text
-  #           exit 1
-  #         fi
-  #
-  #         echo "✅ Deploy DEV finalizado com sucesso!"
+# jobs:
+# deploy-dev:
+#   name: 🚀 Build, Push & Deploy to DEV
+#   runs-on: ubuntu-latest
+#   if: github.event.pull_request.merged == true
+
+#   steps:
+#     - name: 📥 Checkout code
+#       uses: actions/checkout@v4
+
+#     - name: 🔑 Configure AWS Credentials
+#       uses: aws-actions/configure-aws-credentials@v4
+#       with:
+#         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#         aws-region: ${{ env.AWS_REGION }}
+
+#     - name: 🔐 Login to Amazon ECR
+#       id: ecr-login
+#       uses: aws-actions/amazon-ecr-login@v2
+
+#     - name: 🐳 Build & Push Docker image
+#       env:
+#         ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+#         IMAGE_TAG: ${{ github.sha }}
+#       run: |
+#         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+#                       -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+
+#         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+#         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+#         echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+#     - name: � Get EC2 Instance ID
+#       id: ec2
+#       run: |
+#         INSTANCE_ID=$(aws ec2 describe-instances \
+#           --filters \
+#             "Name=tag:AppName,Values=api" \
+#             "Name=tag:Environment,Values=dev" \
+#             "Name=instance-state-name,Values=running" \
+#           --query 'Reservations[0].Instances[0].InstanceId' \
+#           --output text)
+
+#         if [ "${INSTANCE_ID}" = "None" ] || [ -z "${INSTANCE_ID}" ]; then
+#           echo "❌ Nenhuma instância EC2 encontrada com tags AppName=api e Environment=dev"
+#           exit 1
+#         fi
+
+#         echo "✅ Instance ID: ${INSTANCE_ID}"
+#         echo "instance_id=${INSTANCE_ID}" >> $GITHUB_OUTPUT
+
+#     - name: 🚀 Deploy via SSM
+#       env:
+#         ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+#         IMAGE_TAG: ${{ github.sha }}
+#       run: |
+#         IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+#         INSTANCE_ID="${{ steps.ec2.outputs.instance_id }}"
+
+#         echo "📦 Deploying image: ${IMAGE}"
+#         echo "🖥️  Instance: ${INSTANCE_ID}"
+
+#         # Cria o script de deploy
+#         cat > /tmp/deploy.sh <<EOF
+#         #!/bin/bash
+#         set -e
+#         cd /opt/app
+#         echo "🔄 Syncing environment variables..."
+#         ./sync-env.sh
+#         echo "🔐 Logging in to ECR..."
+#         aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+#         echo "⬇️ Pulling latest image..."
+#         docker-compose pull
+#         echo "🛑 Stopping current containers..."
+#         docker-compose down
+#         echo "🧹 Cleaning up old images..."
+#         docker image prune -f
+#         echo "🚀 Starting new containers..."
+#         docker-compose up -d
+#         echo "✅ Deploy completed!"
+#         sleep 5
+#         curl -f http://localhost:8080/api/health || echo "⚠️ Health check failed"
+#         EOF
+
+#         # Converte o script em JSON array com um único elemento
+#         SCRIPT_CONTENT=$(cat /tmp/deploy.sh | jq -Rs '.')
+#         PARAMS=$(jq -n --argjson script "$SCRIPT_CONTENT" '{"commands": [$script]}')
+
+#         COMMAND_ID=$(aws ssm send-command \
+#           --instance-ids "${INSTANCE_ID}" \
+#           --document-name "AWS-RunShellScript" \
+#           --parameters "${PARAMS}" \
+#           --output text --query 'Command.CommandId')
+
+#         echo "⏳ Aguardando execução... (CommandId: ${COMMAND_ID})"
+
+#         aws ssm wait command-executed \
+#           --instance-id "${INSTANCE_ID}" \
+#           --command-id "${COMMAND_ID}" 2>/dev/null || true
+
+#         STATUS=$(aws ssm get-command-invocation \
+#           --instance-id "${INSTANCE_ID}" \
+#           --command-id "${COMMAND_ID}" \
+#           --query 'Status' --output text)
+
+#         echo "📋 Output:"
+#         aws ssm get-command-invocation \
+#           --instance-id "${INSTANCE_ID}" \
+#           --command-id "${COMMAND_ID}" \
+#           --query 'StandardOutputContent' --output text
+
+#         if [ "${STATUS}" != "Success" ]; then
+#           echo "❌ Deploy falhou (status: ${STATUS})"
+#           aws ssm get-command-invocation \
+#             --instance-id "${INSTANCE_ID}" \
+#             --command-id "${COMMAND_ID}" \
+#             --query 'StandardErrorContent' --output text
+#           exit 1
+#         fi
+
+#         echo "✅ Deploy Dev finalizado com sucesso!"
