@@ -2,33 +2,45 @@
 
 ## Visão Geral
 
-A pipeline é dividida em **2 workflows** separados:
+A pipeline é dividida em **3 workflows**:
 
 ```
-                          feature/xxx
-                              │
-                              │  push (nada acontece)
-                              │
-                              ▼
-                     Abre PR → develop
-                              │
-                 ┌────────────┤
-                 ▼            │
-          ┌────────────┐      │
-          │  ci.yml    │      │
-          │ 🔨 Build   │      │
-          │ 🧪 Test    │      │
-          │ 🐳 Docker  │      │
-          └────────────┘      │
-                              │  PR mergeado
-                              ▼
-                       ┌────────────┐
-                       │  cd.yml    │
-                       │ 🔨 Build   │
-                       │ 🧪 Test    │
-                       │ 🐳 ECR     │
-                       │ 🚀 Deploy  │
-                       └────────────┘
+  feature/xxx
+      │
+      │  push (nada acontece)
+      │
+      ▼
+      ├── Abre PR → develop
+      │         │
+      │         ▼
+      │   ┌────────────┐
+      │   │  ci.yml    │   ← Valida o código
+      │   │ 🔨 Build   │
+      │   │ 🧪 Test    │
+      │   │ 🐳 Docker  │
+      │   └────────────┘
+      │
+      ├── PR mergeado na develop
+      │         │
+      │         ▼
+      │   ┌─────────────┐
+      │   │ cd-dev.yml  │   ← Notifica o dev (deploy DEV futuro)
+      │   │ � Aviso     │
+      │   │ "Abra PR    │
+      │   │  → main"    │
+      │   └─────────────┘
+      │
+      └── Abre PR develop → main
+                │
+                ├── PR mergeado na main
+                │
+                ▼
+          ┌──────────────┐
+          │ cd-prod.yml  │   ← Deploy em produção
+          │ � ECR Push   │
+          │ 🚀 Deploy    │
+          │    EC2       │
+          └──────────────┘
 ```
 
 ---
@@ -38,7 +50,6 @@ A pipeline é dividida em **2 workflows** separados:
 **Arquivo:** `.github/workflows/ci.yml`
 
 **Aciona quando:**
-- Push na branch `develop`
 - Pull Request aberto para `develop` (ex: `feature/xxx` → `develop`)
 
 **Steps:**
@@ -53,21 +64,47 @@ A pipeline é dividida em **2 workflows** separados:
 
 ---
 
-## Workflow 2: CD (`cd.yml`)
+## Workflow 2: CD DEV (`cd-dev.yml`)
 
-**Arquivo:** `.github/workflows/cd.yml`
+**Arquivo:** `.github/workflows/cd-dev.yml`
 
 **Aciona quando:**
 - Pull Request é **mergeado** na `develop`
+
+> PRs fechados sem merge **não acionam** este workflow.
+
+### Situação Atual (sem ambiente DEV)
+
+Apenas exibe uma mensagem no log do GitHub Actions avisando o dev:
+- ✅ PR mergeado na develop com sucesso
+- 👉 Abra um PR de `develop` → `main` para fazer o deploy em produção
+- Inclui link direto para criar o PR
+
+### Futuro (com ambiente DEV)
+
+O workflow já tem toda a lógica **comentada** e pronta para ativar:
+1. Login no AWS ECR
+2. Build e push da imagem Docker (repositório `sample-api-dev`)
+3. SSH na EC2 DEV para deploy
+
+**Para ativar:** descomente o job `deploy-dev` e comente o job `notify` no arquivo `cd-dev.yml`. Adicione os secrets: `EC2_HOST_DEV`, `EC2_USER_DEV`, `EC2_SSH_KEY_DEV`.
+
+---
+
+## Workflow 3: CD PROD (`cd-prod.yml`)
+
+**Arquivo:** `.github/workflows/cd-prod.yml`
+
+**Aciona quando:**
+- Pull Request é **mergeado** na `main` (ex: `develop` → `main`)
 
 > PRs fechados sem merge **não acionam** o deploy.
 
 **Steps:**
 1. Checkout do código
-2. Build e testes (validação final)
-3. Login no AWS ECR
-4. Build e push da imagem Docker para o ECR
-5. SSH na EC2 para:
+2. Login no AWS ECR
+3. Build e push da imagem Docker para o ECR
+4. SSH na EC2 para:
    - Pull da nova imagem do ECR
    - Stop/Remove do container antigo
    - Start do novo container
@@ -75,19 +112,23 @@ A pipeline é dividida em **2 workflows** separados:
 
 ---
 
-## Fluxo de Trabalho
+## Fluxo de Trabalho Completo
 
-1. Criar uma branch `feature/xxx` a partir de `develop`
-2. Fazer as alterações e commitar (nada acontece)
-3. Abrir um Pull Request de `feature/xxx` → `develop`
-4. **CI roda automaticamente** (build + testes)
-5. Code review e aprovação
-6. Merge do PR
-7. **CD roda automaticamente** (build + push ECR + deploy EC2)
+```
+1. git checkout -b feature/xxx develop
+2. Desenvolve e commita                    → nada acontece
+3. Abre PR: feature/xxx → develop          → CI roda (build + test) ✅
+4. Code review + aprovação
+5. Merge do PR na develop                  → CD DEV roda (notifica) 📢
+6. Abre PR: develop → main                 → (nenhuma pipeline nesse momento)
+7. Merge do PR na main                     → CD PROD roda (ECR + deploy) 🚀
+```
 
 ---
 
 ## Secrets Necessários
+
+### Produção (obrigatórios)
 
 | Secret                  | Exemplo / Descrição                       |
 |-------------------------|-------------------------------------------|
@@ -96,6 +137,14 @@ A pipeline é dividida em **2 workflows** separados:
 | `EC2_HOST`              | `54.123.45.67`                            |
 | `EC2_USER`              | `ubuntu`                                  |
 | `EC2_SSH_KEY`           | Conteúdo da chave `.pem` da EC2           |
+
+### Desenvolvimento (para o futuro)
+
+| Secret                  | Exemplo / Descrição                       |
+|-------------------------|-------------------------------------------|
+| `EC2_HOST_DEV`          | IP da EC2 de DEV                          |
+| `EC2_USER_DEV`          | Usuário SSH da EC2 de DEV                 |
+| `EC2_SSH_KEY_DEV`       | Chave `.pem` da EC2 de DEV               |
 
 ### Como adicionar os Secrets
 

@@ -1,0 +1,119 @@
+name: CD DEV - Deploy to Development
+
+# =============================================================
+# 🔔 Aciona quando um PR é mergeado na branch develop
+# 
+# SITUAÇÃO ATUAL: Não existe ambiente de DEV ainda.
+# Este workflow apenas notifica o dev para abrir PR na main.
+#
+# FUTURO: Quando tiver ambiente de DEV, descomente os steps
+# comentados abaixo para fazer build, push ECR e deploy na EC2.
+# =============================================================
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types:
+      - closed
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: sample-api
+  # ECR_REPOSITORY_DEV: sample-api-dev  # Descomente quando tiver ambiente de DEV
+
+jobs:
+  notify:
+    name: 📢 Notify - Merge to Main
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: 📢 Aviso - Ambiente de DEV não disponível
+        run: |
+          echo "============================================================="
+          echo "✅ PR mergeado na develop com sucesso!"
+          echo ""
+          echo "⚠️  Ambiente de DEV não está disponível no momento."
+          echo ""
+          echo "👉 Próximo passo: Abra um Pull Request de develop → main"
+          echo "   para acionar o deploy em produção."
+          echo ""
+          echo "   Repositório: ${{ github.repository }}"
+          echo "   Link: https://github.com/${{ github.repository }}/compare/main...develop"
+          echo "============================================================="
+
+  # =============================================================
+  # 🚀 DEPLOY DEV (DESCOMENTADO QUANDO HOUVER AMBIENTE)
+  #
+  # Para ativar: descomente o job abaixo e comente/remova o job
+  # "notify" acima. Adicione os secrets necessários no GitHub.
+  # =============================================================
+
+  # deploy-dev:
+  #   name: 🚀 Deploy to DEV
+  #   runs-on: ubuntu-latest
+  #   if: github.event.pull_request.merged == true
+  #
+  #   steps:
+  #     - name: 📥 Checkout code
+  #       uses: actions/checkout@v4
+  #
+  #     - name: 🔑 Configure AWS Credentials
+  #       uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-region: ${{ env.AWS_REGION }}
+  #
+  #     - name: 🔐 Login to Amazon ECR
+  #       id: ecr-login
+  #       uses: aws-actions/amazon-ecr-login@v2
+  #
+  #     - name: 🐳 Build & Push Docker image
+  #       env:
+  #         ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+  #         IMAGE_TAG: ${{ github.sha }}
+  #       run: |
+  #         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY_DEV:$IMAGE_TAG \
+  #                       -t $ECR_REGISTRY/$ECR_REPOSITORY_DEV:latest .
+  #
+  #         docker push $ECR_REGISTRY/$ECR_REPOSITORY_DEV:$IMAGE_TAG
+  #         docker push $ECR_REGISTRY/$ECR_REPOSITORY_DEV:latest
+  #
+  #         echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY_DEV:$IMAGE_TAG"
+  #
+  #     - name: 📋 Deploy to EC2 DEV
+  #       uses: appleboy/ssh-action@v1.0.3
+  #       with:
+  #         host: ${{ secrets.EC2_HOST_DEV }}
+  #         username: ${{ secrets.EC2_USER_DEV }}
+  #         key: ${{ secrets.EC2_SSH_KEY_DEV }}
+  #         envs: AWS_REGION,ECR_REPOSITORY_DEV
+  #         script: |
+  #           # Login no ECR
+  #           aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${{ steps.ecr-login.outputs.registry }}
+  #
+  #           # Pull da nova imagem
+  #           docker pull ${{ steps.ecr-login.outputs.registry }}/$ECR_REPOSITORY_DEV:latest
+  #
+  #           # Stop/Remove container antigo
+  #           docker stop sample-api-dev 2>/dev/null || true
+  #           docker rm sample-api-dev 2>/dev/null || true
+  #
+  #           # Start novo container
+  #           docker run -d \
+  #             --name sample-api-dev \
+  #             --restart unless-stopped \
+  #             -p 8080:8080 \
+  #             -e ASPNETCORE_ENVIRONMENT=Development \
+  #             ${{ steps.ecr-login.outputs.registry }}/$ECR_REPOSITORY_DEV:latest
+  #
+  #           # Cleanup
+  #           docker image prune -f
+  #
+  #           echo "✅ Deploy DEV completed!"
+  #
+  #           # Health check
+  #           sleep 5
+  #           curl -f http://localhost:8080/api/health || echo "⚠️ Health check failed"
