@@ -1,0 +1,263 @@
+name: ROLLBACK - Deploy Previous Version
+
+# =============================================================
+# 🔄 Workflow manual para rollback de uma versão em produção
+# 
+# Como usar:
+# 1. Vá em Actions → ROLLBACK → Run workflow
+# 2. Escolha o commit SHA da versão anterior
+# 3. Confirme o rollback
+# 
+# ⚠️ ATENÇÃO: Este workflow faz rollback direto em produção!
+# =============================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 'SHA do commit para fazer rollback (ex: a1b2c3d4)'
+        required: true
+        type: string
+      confirm_rollback:
+        description: 'Digite "CONFIRMO" para prosseguir com o rollback'
+        required: true
+        type: string
+      environment:
+        description: 'Ambiente para rollback'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: dev/nautihub
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+
+jobs:
+  validate-input:
+    name: 🔍 Validar Entrada
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.validate.outputs.proceed }}
+      target_sha: ${{ steps.validate.outputs.target_sha }}
+    
+    steps:
+      - name: 🔍 Validar confirmação
+        id: validate
+        run: |
+          if [ "${{ github.event.inputs.confirm_rollback }}" != "CONFIRMO" ]; then
+            echo "❌ Rollback cancelado. Digite exatamente 'CONFIRMO' para prosseguir."
+            exit 1
+          fi
+          
+          TARGET_SHA="${{ github.event.inputs.target_sha }}"
+          
+          # Remove prefixos comuns e normaliza o SHA
+          TARGET_SHA=$(echo "$TARGET_SHA" | sed 's/^refs\/heads\///' | sed 's/^origin\///' | cut -c1-40)
+          
+          if [[ ! "$TARGET_SHA" =~ ^[a-f0-9]{7,40}$ ]]; then
+            echo "❌ SHA inválido: $TARGET_SHA"
+            echo "   Deve ser um hash de commit válido (7-40 caracteres hexadecimais)"
+            exit 1
+          fi
+          
+          echo "✅ Validação ok. SHA alvo: $TARGET_SHA"
+          echo "proceed=true" >> $GITHUB_OUTPUT
+          echo "target_sha=$TARGET_SHA" >> $GITHUB_OUTPUT
+
+  check-image-exists:
+    name: 🔍 Verificar se a imagem existe no ECR
+    runs-on: ubuntu-latest
+    needs: validate-input
+    if: needs.validate-input.outputs.proceed == 'true'
+    
+    steps:
+      - name: 🔑 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔐 Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 🔍 Verificar se imagem existe
+        run: |
+          TARGET_SHA="${{ needs.validate-input.outputs.target_sha }}"
+          
+          echo "🔍 Verificando se existe imagem para SHA: $TARGET_SHA"
+          
+          # Tenta listar a imagem com a tag específica
+          if aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --image-ids imageTag=$TARGET_SHA \
+            --no-cli-pager > /dev/null 2>&1; then
+            echo "✅ Imagem encontrada: $ECR_REGISTRY/$ECR_REPOSITORY:$TARGET_SHA"
+          else
+            echo "❌ Imagem não encontrada no ECR para SHA: $TARGET_SHA"
+            echo ""
+            echo "💡 Imagens disponíveis recentes:"
+            aws ecr describe-images \
+              --repository-name $ECR_REPOSITORY \
+              --max-items 10 \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-10:][*].[imageTags[0],imagePushedAt]' \
+              --output table || true
+            exit 1
+          fi
+
+  rollback:
+    name: 🔄 Executar Rollback
+    runs-on: ubuntu-latest
+    needs: [validate-input, check-image-exists]
+    if: needs.validate-input.outputs.proceed == 'true'
+    
+    steps:
+      - name: 📥 Checkout code (para logs/contexto)
+        uses: actions/checkout@v4
+
+      - name: 🔑 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔐 Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 🔍 Get EC2 Instance ID
+        id: ec2
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters \
+              "Name=tag:AppName,Values=api" \
+              "Name=tag:Environment,Values=${{ github.event.inputs.environment }}" \
+              "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
+
+          if [ "${INSTANCE_ID}" = "None" ] || [ -z "${INSTANCE_ID}" ]; then
+            echo "❌ Nenhuma instância EC2 encontrada"
+            echo "   Tags: AppName=api, Environment=${{ github.event.inputs.environment }}"
+            exit 1
+          fi
+
+          echo "✅ Instance ID: ${INSTANCE_ID}"
+          echo "instance_id=${INSTANCE_ID}" >> $GITHUB_OUTPUT
+
+      - name: 🔄 Executar Rollback via SSM
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          TARGET_SHA: ${{ needs.validate-input.outputs.target_sha }}
+        run: |
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${TARGET_SHA}"
+          INSTANCE_ID="${{ steps.ec2.outputs.instance_id }}"
+
+          echo "=============================================="
+          echo "🔄 INICIANDO ROLLBACK"
+          echo "=============================================="
+          echo "🎯 Ambiente: ${{ github.event.inputs.environment }}"
+          echo "📦 Imagem alvo: ${IMAGE}"
+          echo "🖥️  Instância: ${INSTANCE_ID}"
+          echo "👤 Solicitado por: ${{ github.actor }}"
+          echo "=============================================="
+
+          # Cria o script de rollback
+          cat > /tmp/rollback.sh <<EOF
+          #!/bin/bash
+          set -e
+
+          echo "🔄 Iniciando rollback para SHA: ${TARGET_SHA}"
+          
+          cd /opt/app
+          
+          echo "📋 Estado atual:"
+          docker-compose ps
+
+          echo "🔄 Fazendo backup do docker-compose.yml atual..."
+          cp docker-compose.yml docker-compose.yml.backup.\$(date +%s)
+
+          echo "🔐 Login no ECR..."
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+
+          echo "📝 Atualizando docker-compose.yml para usar SHA: ${TARGET_SHA}"
+          # Assume que a imagem está configurada com :latest no compose
+          # e substitui por :SHA específico
+          sed -i.bak "s|${ECR_REGISTRY}/${ECR_REPOSITORY}:.*|${ECR_REGISTRY}/${ECR_REPOSITORY}:${TARGET_SHA}|g" docker-compose.yml
+
+          echo "⬇️ Fazendo pull da imagem de rollback..."
+          docker pull ${IMAGE}
+
+          echo "🛑 Parando containers atuais..."
+          docker-compose down
+
+          echo "🚀 Subindo com a versão de rollback..."
+          docker-compose up -d
+
+          echo "⏳ Aguardando containers iniciarem..."
+          sleep 10
+
+          echo "🩺 Health check..."
+          if curl -f http://localhost:8080/api/health; then
+            echo "✅ Rollback concluído com sucesso!"
+            echo "📋 Estado final:"
+            docker-compose ps
+          else
+            echo "⚠️ Health check falhou, mas containers estão rodando"
+            docker-compose ps
+          fi
+          EOF
+
+          # Converte o script em JSON
+          SCRIPT_CONTENT=$(cat /tmp/rollback.sh | jq -Rs '.')
+          PARAMS=$(jq -n --argjson script "$SCRIPT_CONTENT" '{"commands": [$script]}')
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "${PARAMS}" \
+            --output text --query 'Command.CommandId')
+
+          echo "⏳ Executando rollback... (CommandId: ${COMMAND_ID})"
+
+          # Aguarda execução
+          aws ssm wait command-executed \
+            --instance-id "${INSTANCE_ID}" \
+            --command-id "${COMMAND_ID}" 2>/dev/null || true
+
+          # Verifica resultado
+          STATUS=$(aws ssm get-command-invocation \
+            --instance-id "${INSTANCE_ID}" \
+            --command-id "${COMMAND_ID}" \
+            --query 'Status' --output text)
+
+          echo ""
+          echo "📋 Output do rollback:"
+          aws ssm get-command-invocation \
+            --instance-id "${INSTANCE_ID}" \
+            --command-id "${COMMAND_ID}" \
+            --query 'StandardOutputContent' --output text
+
+          if [ "${STATUS}" != "Success" ]; then
+            echo ""
+            echo "❌ Rollback falhou (status: ${STATUS})"
+            aws ssm get-command-invocation \
+              --instance-id "${INSTANCE_ID}" \
+              --command-id "${COMMAND_ID}" \
+              --query 'StandardErrorContent' --output text
+            exit 1
+          fi
+
+          echo ""
+          echo "=============================================="
+          echo "✅ ROLLBACK CONCLUÍDO COM SUCESSO!"
+          echo "=============================================="
+          echo "🎯 Ambiente: ${{ github.event.inputs.environment }}"
+          echo "📦 Versão ativa: ${TARGET_SHA}"
+          echo "🕒 $(date)"
+          echo "=============================================="

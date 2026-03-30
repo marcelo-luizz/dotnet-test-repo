@@ -1,0 +1,165 @@
+name: LIST DEPLOYMENTS - Ver histórico de versões
+
+# =============================================================
+# 📋 Workflow manual para listar versões deployadas
+# 
+# Como usar:
+# 1. Vá em Actions → LIST DEPLOYMENTS → Run workflow
+# 2. Escolha o ambiente
+# 3. Veja o histórico de commits e imagens disponíveis
+# 
+# Útil para identificar o SHA correto para rollback.
+# =============================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Ambiente para consultar'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+      limit:
+        description: 'Quantas versões mostrar'
+        required: false
+        default: '10'
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: dev/nautihub
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+
+jobs:
+  list-deployments:
+    name: 📋 Listar Deployments
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 50  # Busca os últimos 50 commits
+
+      - name: 🔑 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📋 Listar versões disponíveis
+        run: |
+          echo "=============================================="
+          echo "📋 HISTÓRICO DE DEPLOYMENTS"
+          echo "=============================================="
+          echo "🎯 Ambiente: ${{ github.event.inputs.environment }}"
+          echo "📦 Repositório ECR: $ECR_REPOSITORY"
+          echo "🕒 $(date)"
+          echo "=============================================="
+          echo ""
+
+          LIMIT="${{ github.event.inputs.limit }}"
+          
+          echo "📋 Últimos $LIMIT commits na main:"
+          echo ""
+          git log --oneline -n $LIMIT main | while read sha message; do
+            short_sha=$(echo $sha | cut -c1-7)
+            echo "  $short_sha - $message"
+          done
+          
+          echo ""
+          echo "=============================================="
+          echo "🐳 Imagens disponíveis no ECR:"
+          echo "=============================================="
+          
+          # Lista imagens no ECR ordenadas por data
+          if aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --max-items $LIMIT \
+            --query 'sort_by(imageDetails,&imagePushedAt)[-'$LIMIT':][*]' \
+            --output json > /tmp/images.json 2>/dev/null; then
+            
+            echo ""
+            printf "%-12s %-20s %-10s %s\n" "SHA" "DATA/HORA" "TAMANHO" "TAGS"
+            echo "--------------------------------------------------------"
+            
+            jq -r '.[] | select(.imageTags != null) | 
+              "\(.imageTags[0] // "sem-tag") \(.imagePushedAt) \(.imageSizeInBytes)"' \
+              /tmp/images.json | \
+            while read sha_tag date size; do
+              if [[ "$sha_tag" =~ ^[a-f0-9]{7,40}$ ]]; then
+                short_sha=$(echo $sha_tag | cut -c1-7)
+                formatted_date=$(date -d "$date" '+%d/%m %H:%M' 2>/dev/null || echo "$date")
+                size_mb=$(echo "scale=1; $size / 1024 / 1024" | bc 2>/dev/null || echo "?")
+                printf "%-12s %-20s %-10s %s\n" "$short_sha" "$formatted_date" "${size_mb}MB" "$sha_tag"
+              fi
+            done | sort -k2 -r  # Ordena por data (mais recente primeiro)
+            
+          else
+            echo "❌ Erro ao consultar imagens do ECR"
+            echo "Verifique se o repositório $ECR_REPOSITORY existe"
+          fi
+
+          echo ""
+          echo "=============================================="
+          echo "💡 COMO FAZER ROLLBACK:"
+          echo "=============================================="
+          echo "1. Copie o SHA de 7 dígitos da versão desejada"
+          echo "2. Vá em Actions → ROLLBACK → Run workflow"
+          echo "3. Cole o SHA e digite 'CONFIRMO'"
+          echo "4. Execute o rollback"
+          echo ""
+          echo "⚠️  IMPORTANTE:"
+          echo "- Use apenas SHAs que aparecem nas imagens do ECR"
+          echo "- O rollback é imediato e afeta produção"
+          echo "- Mantenha a equipe informada antes do rollback"
+          echo "=============================================="
+
+      - name: 🖥️ Status atual da EC2
+        run: |
+          echo ""
+          echo "=============================================="
+          echo "🖥️ STATUS ATUAL DA EC2 (${{ github.event.inputs.environment }})"
+          echo "=============================================="
+          
+          # Busca a instância EC2
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters \
+              "Name=tag:AppName,Values=api" \
+              "Name=tag:Environment,Values=${{ github.event.inputs.environment }}" \
+              "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
+
+          if [ "${INSTANCE_ID}" = "None" ] || [ -z "${INSTANCE_ID}" ]; then
+            echo "❌ Instância EC2 não encontrada"
+            echo "   Tags: AppName=api, Environment=${{ github.event.inputs.environment }}"
+          else
+            echo "✅ Instance ID: ${INSTANCE_ID}"
+            
+            # Verifica status dos containers via SSM (se possível)
+            echo ""
+            echo "🐳 Tentando verificar containers atuais..."
+            
+            COMMAND_ID=$(aws ssm send-command \
+              --instance-ids "${INSTANCE_ID}" \
+              --document-name "AWS-RunShellScript" \
+              --parameters 'commands=["cd /opt/app && docker-compose ps && echo && echo \"Current image:\" && docker-compose config | grep image"]' \
+              --output text --query 'Command.CommandId' 2>/dev/null || echo "failed")
+            
+            if [ "$COMMAND_ID" != "failed" ]; then
+              sleep 5  # Aguarda um pouco
+              aws ssm get-command-invocation \
+                --instance-id "${INSTANCE_ID}" \
+                --command-id "${COMMAND_ID}" \
+                --query 'StandardOutputContent' --output text 2>/dev/null || echo "⚠️ Não foi possível consultar status dos containers"
+            else
+              echo "⚠️ Não foi possível consultar via SSM"
+            fi
+          fi
+          
+          echo "=============================================="

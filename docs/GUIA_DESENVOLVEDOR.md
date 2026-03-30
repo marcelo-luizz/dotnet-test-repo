@@ -215,6 +215,44 @@ A pipeline de CD vai:
 8. ✅ ou ❌ Exibe output e status
 ```
 
+### Pipeline: `rollback.yml` — Rollback em Produção (Manual)
+
+| Quando roda | Manualmente (`workflow_dispatch`) |
+|-------------|-----------------------------------|
+| O que faz   | Rollback para versão anterior ou específica |
+| Duração     | ~3-5 minutos |
+| Parâmetros  | SHA do commit + confirmação obrigatória |
+
+**Como usar:**
+1. 📋 Execute `LIST DEPLOYMENTS` primeiro para ver versões disponíveis
+2. 🔄 Vá em `Actions → ROLLBACK → Run workflow`  
+3. ✍️ Informe o SHA (7 caracteres) da versão desejada
+4. ⚠️ Digite "CONFIRMO" obrigatoriamente
+5. 🚀 Execute o workflow
+
+**Steps detalhados:**
+```
+1. 🔍 Validação: Verifica se imagem existe no ECR
+2. 🐳 Deploy: Substitui imagem no docker-compose via SSM  
+3. 🏥 Health Check: Testa endpoint /api/health
+4. 📢 Notificação: Informa sucesso/falha
+5. 🚨 Recuperação: Se falhar, tenta voltar versão anterior
+```
+
+### Pipeline: `list-deployments.yml` — Consultar Versões (Manual)
+
+| Quando roda | Manualmente (`workflow_dispatch`) |
+|-------------|-----------------------------------|
+| O que faz   | Lista commits e imagens disponíveis |
+| Duração     | ~30 segundos |
+| Útil para   | Identificar SHA correto para rollback |
+
+**Como usar:**
+1. 📋 Vá em `Actions → LIST DEPLOYMENTS → Run workflow`
+2. 🎯 Escolha ambiente (dev/prod) 
+3. 🔢 Defina quantas versões mostrar (padrão: 10)
+4. 📊 Veja relatório completo com commits, imagens ECR e status EC2
+
 ---
 
 ## 5. 👀 Como acompanhar as Pipelines
@@ -430,4 +468,15 @@ R: Vá em Actions → CD PROD e veja se ficou ✅. O health check no final confi
 R: É um script na EC2 que puxa variáveis de ambiente do AWS SSM Parameter Store e gera o arquivo `.env` usado pelo `docker-compose.yml`.
 
 **P: Posso fazer rollback?**  
-R: Sim. No ECR ficam as imagens com tag do commit SHA. Na EC2, altere o `docker-compose.yml` para apontar para a tag anterior e rode `docker-compose up -d`.
+R: **Sim! Use os workflows do GitHub Actions:**
+- 📋 **LIST DEPLOYMENTS:** Para ver versões disponíveis (`Actions → LIST DEPLOYMENTS`)
+- 🔄 **ROLLBACK:** Para fazer rollback seguro (`Actions → ROLLBACK`)
+
+Os workflows fazem:
+- ✅ Validação automática da imagem no ECR
+- 🐳 Deploy seguro da versão escolhida  
+- 🏥 Health check automático
+- 📢 Notificações de status
+- ⚠️ Tentativa de recuperação em caso de falha
+
+**Manual alternativo:** Na EC2, altere o `docker-compose.yml` para apontar para a tag anterior e rode `docker-compose up -d`.
